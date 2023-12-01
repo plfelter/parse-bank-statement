@@ -1,8 +1,6 @@
 from pathlib import Path
-import pandas as pd
 import fitz
 import re
-import time
 import locale
 import contextlib
 from datetime import datetime
@@ -25,15 +23,12 @@ def get_emission_date(statement: Path) -> None | datetime:
                 date_str: str = re.search(
                     r"Relevé édité le (?P<date>\d+ \w+ \d{4})", first_page
                 ).group("date")
-                datet: datetime = datetime.strptime(date_str, "%d %B %Y")
-            # Probleme: le relevé change de nom: de CCP à compte en avril/mai 2017
-            # statement_nb: int = int(
-            #     re.search("Relevé de vos comptes - n° (?P<num>\d+)", first_page).group(
-            #         "num"
-            #     )
-            # )
-            # if statement_nb != datet.month:
-            #     raise Exception(
-            #         f"File: {statement}\nLe numéro de relevé devrait être égal au numéro du mois du relevé"
-            #     )
-            return date_str, datet
+                date_t: datetime = datetime.strptime(date_str, "%d %B %Y")
+            return date_t
+
+
+# TODO: write function to retrieve all transactions from a bank statement file
+#   This function should:
+#       - Try to classify each transaction between debits and credits
+#       - check the coherence of this classification with the bank
+#         statement summary line "Total des opérations"

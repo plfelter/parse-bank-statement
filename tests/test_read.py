@@ -11,8 +11,7 @@ def test_get_emission_date():
             )
         )
     )
-    l = list(map(get_emission_date, lbp_files))
-    print(l)
+    print(list(map(get_emission_date, lbp_files)))
 
 
 if __name__ == "__main__":
