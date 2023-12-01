@@ -30,5 +30,6 @@ def get_emission_date(statement: Path) -> None | datetime:
 # TODO: write function to retrieve all transactions from a bank statement file
 #   This function should:
 #       - Try to classify each transaction between debits and credits
+#         This guess could use the title wording (ACHAT, PRELEVEMENT, VIREMENT DE/POUR...)
 #       - check the coherence of this classification with the bank
 #         statement summary line "Total des opérations"
