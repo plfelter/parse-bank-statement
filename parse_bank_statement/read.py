@@ -15,7 +15,7 @@ class Statement:
     pages: list[str] = field(init=False)
     emission_date: datetime = field(init=False)
     headers: list[str] = field(init=False)
-    table_content: str = field(init=False)
+    accounts: pd.DataFrame = field(init=False)
     transactions: pd.DataFrame = field(init=False)
 
     def __post_init__(self):
@@ -26,8 +26,8 @@ class Statement:
             )
         self.emission_date = self.get_emission_date()
         self.headers = self.get_transactions_headers()
-        self.table_content = self.merge_tables()
-        self.transactions = self.get_transactions()
+        self.accounts = self.get_accounts_start_pos()
+        self.transactions = self.get_all_transactions()
 
     def get_pages_content(self) -> list[str]:
         with fitz.open(self.pdf) as doc:
@@ -51,25 +51,38 @@ class Statement:
             flags=re.DOTALL,
         )[0].split("\n")
 
-    def get_transactions(self) -> pd.DataFrame:
-        pass
-
-    def merge_tables(self) -> str:
-        regex = (
-            r"^.*\n(?P<headers>"
-            + (r"\n".join(self.headers).replace("(", ".").replace(")", "."))
-            + r")\n(?P<table>.*?)\n$"
-        )
-
-        def extract_transaction_table(page_content: str) -> str:
-            m = re.search(
-                regex,
-                page_content,
+    def get_accounts_start_pos(self) -> pd.DataFrame:
+        matches = list(
+            re.finditer(
+                r"\n(?P<account_name>[a-zA-Z ]+) n°(?P<account_id>[\w ]+)\n",
+                "".join(self.pages),
                 flags=re.DOTALL,
             )
-            return "" if not m else m.group("table")
+        )
+        return pd.DataFrame(
+            {
+                "start": [m.start() for m in matches],
+                "account_name": [m.group("account_name") for m in matches],
+                "account_id": [m.group("account_id") for m in matches],
+            }
+        ).set_index("start")
 
-        return "".join(map(extract_transaction_table, self.pages))
+    def get_all_transactions(self) -> pd.DataFrame:
+        matches = list(
+            re.finditer(
+                r"(?P<date>\d\d/\d\d)[\s\n](?P<name>.*?)\n(?P<amount>[\d\s]+,\d{2})",
+                "".join(self.pages),
+                flags=re.DOTALL,
+            )
+        )
+        return pd.DataFrame(
+            {
+                "start": [m.start() for m in matches],
+                "date": [m.group("date") for m in matches],
+                "name": [m.group("name") for m in matches],
+                "amount": [m.group("amount") for m in matches],
+            }
+        ).set_index("start")
 
 
 @contextlib.contextmanager

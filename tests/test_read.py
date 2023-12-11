@@ -30,6 +30,9 @@ def test_get_transactions_headers():
 def test_statement():
     for f in lbp_files:
         s = read.Statement(pdf=f)
+        print("------------------- DOC START -------------------")
+        print(s.table_content)
+        print("-------------------- DOC END --------------------")
         assert "Ancien solde" in s.table_content
         assert "Nouveau solde" in s.table_content
 
