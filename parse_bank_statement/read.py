@@ -15,6 +15,8 @@ class Statement:
     pages: list[str] = field(init=False)
     emission_date: datetime = field(init=False)
     headers: list[str] = field(init=False)
+    table_content: str = field(init=False)
+    transactions: pd.DataFrame = field(init=False)
 
     def __post_init__(self):
         self.pages = self.get_pages_content()
@@ -24,6 +26,8 @@ class Statement:
             )
         self.emission_date = self.get_emission_date()
         self.headers = self.get_transactions_headers()
+        self.table_content = self.merge_tables()
+        self.transactions = self.get_transactions()
 
     def get_pages_content(self) -> list[str]:
         with fitz.open(self.pdf) as doc:
@@ -46,6 +50,26 @@ class Statement:
             self.pages[0],
             flags=re.DOTALL,
         )[0].split("\n")
+
+    def get_transactions(self) -> pd.DataFrame:
+        pass
+
+    def merge_tables(self) -> str:
+        regex = (
+            r"^.*\n(?P<headers>"
+            + (r"\n".join(self.headers).replace("(", ".").replace(")", "."))
+            + r")\n(?P<table>.*?)\n$"
+        )
+
+        def extract_transaction_table(page_content: str) -> str:
+            m = re.search(
+                regex,
+                page_content,
+                flags=re.DOTALL,
+            )
+            return "" if not m else m.group("table")
+
+        return "".join(map(extract_transaction_table, self.pages))
 
 
 @contextlib.contextmanager
