@@ -5,6 +5,7 @@ import re
 import locale
 import contextlib
 from datetime import datetime
+import numpy as np
 import pandas as pd
 
 
@@ -28,6 +29,7 @@ class Statement:
         self.headers = self.get_transactions_headers()
         self.accounts = self.get_accounts_start_pos()
         self.transactions = self.get_all_transactions()
+        self.match_transactions_with_accounts()
 
     def get_pages_content(self) -> list[str]:
         with fitz.open(self.pdf) as doc:
@@ -70,12 +72,12 @@ class Statement:
     def get_all_transactions(self) -> pd.DataFrame:
         matches = list(
             re.finditer(
-                r"(?P<date>\d\d/\d\d)[\s\n](?P<name>.*?)\n(?P<amount>[\d\s]+,\d{2})",
+                r"(?P<date>\d\d/\d\d)[\s\n](?P<name>.*?)\n(?P<amount>[\d ]+,\d{2})",
                 "".join(self.pages),
                 flags=re.DOTALL,
             )
         )
-        return pd.DataFrame(
+        statements = pd.DataFrame(
             {
                 "start": [m.start() for m in matches],
                 "date": [m.group("date") for m in matches],
@@ -83,6 +85,23 @@ class Statement:
                 "amount": [m.group("amount") for m in matches],
             }
         ).set_index("start")
+
+        statements.loc[:, "amount"] = statements.loc[:, "amount"].apply(
+            lambda s: float(s.replace(",", ".").replace(" ", ""))
+        )
+        return statements
+
+    def match_transactions_with_accounts(self):
+        account_match_table = pd.DataFrame(
+            {i: self.transactions.index - i for i in self.accounts.index},
+            index=self.transactions.index,
+        ).astype(float)
+        account_match_table.values[account_match_table.values < 0] = np.nan
+        self.transactions["account_start_in_doc"] = account_match_table.idxmin(axis=1)
+        self.transactions = self.transactions.join(
+            self.accounts, on="account_start_in_doc"
+        )
+        self.transactions.drop(["account_start_in_doc"], axis=1, inplace=True)
 
 
 @contextlib.contextmanager
