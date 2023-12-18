@@ -30,6 +30,7 @@ class Statement:
         self.accounts = self.get_accounts_start_pos()
         self.transactions = self.get_all_transactions()
         self.match_transactions_with_accounts()
+        self.classify_credit_debit()
 
     def get_pages_content(self) -> list[str]:
         with fitz.open(self.pdf) as doc:
@@ -65,7 +66,7 @@ class Statement:
             {
                 "start": [m.start() for m in matches],
                 "account_name": [m.group("account_name") for m in matches],
-                "account_id": [m.group("account_id") for m in matches],
+                "account_id": [m.group("account_id").replace(" ", "") for m in matches],
             }
         ).set_index("start")
 
@@ -77,31 +78,117 @@ class Statement:
                 flags=re.DOTALL,
             )
         )
-        statements = pd.DataFrame(
+        transactions = pd.DataFrame(
             {
                 "start": [m.start() for m in matches],
                 "date": [m.group("date") for m in matches],
                 "name": [m.group("name") for m in matches],
                 "amount": [m.group("amount") for m in matches],
             }
-        ).set_index("start")
-
-        statements.loc[:, "amount"] = statements.loc[:, "amount"].apply(
-            lambda s: float(s.replace(",", ".").replace(" ", ""))
         )
-        return statements
+
+        transactions.loc[:, "date"] = transactions.loc[:, "date"].apply(
+            lambda s: datetime.strptime(s + f"/{self.emission_date.year}", "%d/%m/%Y")
+        )
+
+        # Correct year for transactions made in december appearing in january statements
+        # (the LaBanquePostale transaction line does not include the date, argh)
+        if (
+            self.emission_date.month == 1
+            and (
+                december_transactions_mask := pd.to_datetime(transactions.date).dt.month
+                == 12
+            ).any()
+        ):
+            transactions.loc[december_transactions_mask, "date"] = transactions.loc[
+                december_transactions_mask, "date"
+            ] - pd.DateOffset(years=1)
+
+        transactions.loc[:, "amount"] = (
+            transactions.loc[:, "amount"]
+            .apply(lambda s: s.replace(",", ".").replace(" ", ""))
+            .astype(float)
+        )
+        return transactions.set_index(["date", "start"]).sort_index()
 
     def match_transactions_with_accounts(self):
-        account_match_table = pd.DataFrame(
-            {i: self.transactions.index - i for i in self.accounts.index},
-            index=self.transactions.index,
-        ).astype(float)
+        account_match_table = (
+            pd.DataFrame(
+                {
+                    i: self.transactions.index.get_level_values("start") - i
+                    for i in self.accounts.index
+                }
+            )
+            .set_index(self.transactions.index.get_level_values("start"))
+            .astype(float)
+        )
         account_match_table.values[account_match_table.values < 0] = np.nan
-        self.transactions["account_start_in_doc"] = account_match_table.idxmin(axis=1)
+        self.transactions.loc[:, "account_start_in_doc"] = account_match_table.idxmin(
+            axis=1
+        ).values
         self.transactions = self.transactions.join(
-            self.accounts, on="account_start_in_doc"
+            self.accounts.loc[:, "account_id"], on="account_start_in_doc"
         )
         self.transactions.drop(["account_start_in_doc"], axis=1, inplace=True)
+
+    def classify_credit_debit(self):
+        credit_keywords = [
+            "VIREMENT DE",
+            "VIREMENT PERMANENT DE",
+            "VIREMENT INSTANTANE DE",
+            "REMISE DE CHEQUE",
+            "INTERETS ACQUIS",
+            "CREDIT",
+            "REMISE COMMERCIALE D'AGIOS",
+            "VERSEMENT CARTE",
+            "REMBOURSEMENT",
+            "REJET DE VIREMENT",
+            "VERSEMENT EFFECTUE",
+        ]
+        debit_keywords = [
+            "VIREMENT POUR",
+            "VIREMENT PERMANENT POUR",
+            "VIREMENT INSTANTANE POUR",
+            "VIREMENT INSTANTANE A",
+            "VIREMENT EMIS",
+            "ACHAT",
+            "PRELEVEMENT DE",
+            "RETRAIT",
+            "CHEQUE N",
+            "RECHARGEMENT MONEO",
+            "COTISATION",
+            "COMMISSION PAIEMENT",
+            "MINIMUM FORFAITAIRE TRIMESTRIEL",
+        ]
+
+        def determine_is_credit(s: str) -> float:
+            if any(substring.lower() in s.lower() for substring in credit_keywords):
+                return 1
+            elif any(substring.lower() in s.lower() for substring in debit_keywords):
+                return -1
+            else:
+                return 0
+
+        def find_keyword(s: str):
+            if any(
+                (match := substring).lower() in s.lower()
+                for substring in credit_keywords + debit_keywords
+            ):
+                return match
+            else:
+                return None
+
+        self.transactions.loc[:, "credit_debit_sign"] = self.transactions.loc[
+            :, "name"
+        ].apply(determine_is_credit)
+        self.transactions.loc[:, "classification_kw"] = self.transactions.loc[
+            :, "name"
+        ].apply(find_keyword)
+
+        self.transactions.loc[:, "raw_amount"] = self.transactions.amount.copy()
+        self.transactions.loc[:, "amount"] = (
+            self.transactions.credit_debit_sign * self.transactions.amount
+        )
 
 
 @contextlib.contextmanager
